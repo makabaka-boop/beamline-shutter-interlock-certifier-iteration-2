@@ -73,3 +73,29 @@ export type SolveOutcome =
       kind: 'unsat';
       witness: ConflictWitness;
     };
+
+/**
+ * 锁定修复建议：无解结果附带的“最少撤销哪几把锁”的精确答复。
+ * 唯一的修复手段是整把撤销临时锁定——不修改规则、不翻转锁定值、
+ * 不沿用旧快门表。
+ */
+export type RepairSuggestion =
+  | {
+      kind: 'repairable';
+      /**
+       * 需一次性撤销的锁定（含被撤销的锁定值），按 ID 的 UTF-8 字节序排列；
+       * 数量精确最少，并列时取“排序后 ID 清单”按 UTF-8 逐元素字典序最小者。
+       */
+      unlock: Array<{ id: string; state: ShutterState }>;
+      /** 撤销上述锁定后，由原 2-SAT 求解器给出的字典序最小完整方案 */
+      outcome: Extract<SolveOutcome, { kind: 'sat' }>;
+    }
+  | {
+      /** 全部解锁后规则自身仍无解：冲突来自规则集合，不提供撤销清单 */
+      kind: 'rules-conflict';
+    }
+  | {
+      /** 锁定数超过精确求解上限，不计算建议 */
+      kind: 'too-many-locks';
+      count: number;
+    };

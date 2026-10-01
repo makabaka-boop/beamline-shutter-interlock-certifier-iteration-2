@@ -261,6 +261,19 @@ export function solveWorkspace(
   };
 }
 
+/**
+ * 仅做可满足性判定（不构造方案与见证）：建图 + Tarjan + 正反文字同 SCC 扫描。
+ * 供锁定修复搜索对每个候选撤销子集做精确裁决。
+ */
+export function isSatisfiable(
+  workspace: Workspace,
+  locks: Record<string, ShutterState>,
+): boolean {
+  const g = buildGraph(workspace, locks);
+  const comp = tarjan(g.n, g.adj);
+  return findConflictIds(g.sortedIds, comp).length === 0;
+}
+
 /** 比对方案与当前快门表，按 UTF-8 字节序列出改动。 */
 export function computeChanges(
   orderedIds: string[],

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ShutterState, Workspace } from './core/types';
 import { parseWorkspace } from './core/parser';
+import { computeRepairSuggestion } from './core/repair';
 import { computeChanges, solveWorkspace } from './core/sat';
 import { serializeTable } from './lib/export';
 import {
@@ -151,5 +152,52 @@ describe('全链路：特殊编号与普通编号混合的一致身份', () => {
     expect(again.assignment['S1']).toBe('CLOSED'); // 唯一锁定 S1=CLOSED…
     expect(again.assignment['OR']).toBe('OPEN'); // …故规则 0 要求 OR=OPEN
     expect(Object.keys(again.assignment)).toHaveLength(6);
+  });
+
+  it('锁定修复建议：确认后仅撤销所列锁定并重新认证，采纳稿逐行一致', () => {
+    const ws = importOk(IMPORT_TEXT);
+    // 锁 OR=CLOSED 且 S1=CLOSED，直接违反规则 0（OR OPEN ∨ S1 OPEN）
+    let locks: Record<string, ShutterState> = {};
+    locks = toggleLock(locks, 'OR', 'CLOSED');
+    locks = toggleLock(locks, 'S1', 'CLOSED');
+
+    // 认证：无解 → 附带修复建议（复刻 App 的 certify 组合）
+    const outcome = solveWorkspace(ws, locks);
+    expect(outcome.kind).toBe('unsat');
+    const repair =
+      outcome.kind === 'unsat' ? computeRepairSuggestion(ws, locks) : null;
+    expect(repair?.kind).toBe('repairable');
+    if (!repair || repair.kind !== 'repairable') return;
+    // 并列 [OR]/[S1] 取 UTF-8 字节序最小 → 撤销 OR
+    expect(repair.unlock).toEqual([{ id: 'OR', state: 'CLOSED' }]);
+
+    // 确认修复（复刻 handleConfirmRepair）：只一次性撤销所列锁定并重新认证，
+    // 其余锁定、规则、快门表一律不动
+    const nextLocks = { ...locks };
+    for (const u of repair.unlock) delete nextLocks[u.id];
+    expect(Object.keys(nextLocks)).toEqual(['S1']);
+    expect(hasShutterKey(nextLocks, 'OR')).toBe(false);
+    expect(nextLocks['S1']).toBe('CLOSED');
+
+    const again = solveWorkspace(ws, nextLocks);
+    expect(again.kind).toBe('sat');
+    if (again.kind !== 'sat') return;
+    // 重新认证结果与建议中的候选方案一致，且遵守剩余锁定
+    expect(again.assignment).toEqual(repair.outcome.assignment);
+    expect(again.assignment['S1']).toBe('CLOSED');
+    expect(again.assignment['OR']).toBe('OPEN');
+
+    // 采纳并导出：逐行 ID STATE，与快门表完全一致
+    const table = { ...again.assignment };
+    expect(serializeTable(ws, table)).toBe(
+      [
+        'OR OPEN',
+        'S1 CLOSED',
+        'S2 CLOSED',
+        '__proto__ CLOSED',
+        'constructor OPEN',
+        'toString CLOSED',
+      ].join('\n') + '\n',
+    );
   });
 });

@@ -1,6 +1,12 @@
 import { useMemo, useState } from 'react';
-import type { ShutterState, SolveOutcome, Workspace } from './core/types';
+import type {
+  RepairSuggestion,
+  ShutterState,
+  SolveOutcome,
+  Workspace,
+} from './core/types';
 import { parseWorkspace } from './core/parser';
+import { computeRepairSuggestion } from './core/repair';
 import { computeChanges, solveWorkspace } from './core/sat';
 import { sortByUtf8 } from './core/utf8';
 import { downloadText, serializeTable } from './lib/export';
@@ -13,8 +19,21 @@ import { SolutionPanel } from './components/SolutionPanel';
 
 interface Preview {
   outcome: SolveOutcome;
+  /** 无解时附带的锁定修复建议；与 outcome 同一 specRev，共进退 */
+  repair: RepairSuggestion | null;
   /** 认证时的规则版本；与当前 specRev 不同则已失效 */
   specRev: number;
+}
+
+/** 认证：先求解，无解时在同一规则与锁定快照上补算锁定修复建议。 */
+function certify(
+  workspace: Workspace,
+  locks: Record<string, ShutterState>,
+): { outcome: SolveOutcome; repair: RepairSuggestion | null } {
+  const outcome = solveWorkspace(workspace, locks);
+  const repair =
+    outcome.kind === 'unsat' ? computeRepairSuggestion(workspace, locks) : null;
+  return { outcome, repair };
 }
 
 export default function App() {
@@ -66,8 +85,26 @@ export default function App() {
 
   const handleRun = () => {
     if (!workspace) return;
-    const outcome = solveWorkspace(workspace, locks);
-    setPreview({ outcome, specRev });
+    const { outcome, repair } = certify(workspace, locks);
+    setPreview({ outcome, repair, specRev });
+    setAdopted(false);
+  };
+
+  /**
+   * 确认修复：只一次性撤销建议列出的锁定（其余锁定、规则、快门表一律不动），
+   * 并用撤销后的锁定重新认证；建议已过期（规则或锁定期间被改动）则拒绝执行。
+   */
+  const handleConfirmRepair = () => {
+    if (!workspace || !preview || preview.specRev !== specRev) return;
+    const repair = preview.repair;
+    if (!repair || repair.kind !== 'repairable') return;
+    const nextLocks = { ...locks };
+    for (const u of repair.unlock) delete nextLocks[u.id];
+    const nextRev = specRev + 1;
+    const { outcome, repair: nextRepair } = certify(workspace, nextLocks);
+    setLocks(nextLocks);
+    setSpecRev(nextRev);
+    setPreview({ outcome, repair: nextRepair, specRev: nextRev });
     setAdopted(false);
   };
 
@@ -86,6 +123,14 @@ export default function App() {
     preview && !previewStale && preview.outcome.kind === 'sat'
       ? computeChanges(preview.outcome.orderedIds, preview.outcome.assignment, table)
       : [];
+
+  const repairOutcome =
+    preview && !previewStale && preview.repair?.kind === 'repairable'
+      ? preview.repair.outcome
+      : null;
+  const repairChanges = repairOutcome
+    ? computeChanges(repairOutcome.orderedIds, repairOutcome.assignment, table)
+    : [];
 
   return (
     <div className="app">
@@ -183,6 +228,8 @@ export default function App() {
               changes={changes}
               workspace={workspace}
               adopted={adopted}
+              repairChanges={repairChanges}
+              onConfirmRepair={handleConfirmRepair}
             />
           </section>
         </main>
