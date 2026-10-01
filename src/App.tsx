@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
-import type { ShutterState, SolveOutcome, Workspace } from './core/types';
+import type { LockRepair, ShutterState, SolveOutcome, Workspace } from './core/types';
 import { parseWorkspace } from './core/parser';
+import { suggestLockRepair } from './core/repair';
 import { computeChanges, solveWorkspace } from './core/sat';
 import { sortByUtf8 } from './core/utf8';
 import { downloadText, serializeTable } from './lib/export';
@@ -13,6 +14,8 @@ import { SolutionPanel } from './components/SolutionPanel';
 
 interface Preview {
   outcome: SolveOutcome;
+  /** 无解时的锁定修复建议；可行时为 null。与 outcome 同属一次认证，随 specRev 一起失效 */
+  repair: LockRepair | null;
   /** 认证时的规则版本；与当前 specRev 不同则已失效 */
   specRev: number;
 }
@@ -64,11 +67,40 @@ export default function App() {
     setAdopted(false);
   };
 
+  /** 对给定锁定集合运行一次认证，并把结果（含无解时的修复建议）写入预览 */
+  const runCertify = (
+    ws: Workspace,
+    lk: Record<string, ShutterState>,
+    rev: number,
+  ) => {
+    const outcome = solveWorkspace(ws, lk);
+    const repair = outcome.kind === 'unsat' ? suggestLockRepair(ws, lk) : null;
+    setPreview({ outcome, repair, specRev: rev });
+    setAdopted(false);
+  };
+
   const handleRun = () => {
     if (!workspace) return;
-    const outcome = solveWorkspace(workspace, locks);
-    setPreview({ outcome, specRev });
-    setAdopted(false);
+    runCertify(workspace, locks, specRev);
+  };
+
+  /**
+   * 确认修复：只一次性撤销建议所列的锁定（规则、快门表与其余锁定一律不动），
+   * 随后用新的锁定集合重新认证。建议已过期（规则或锁定期间被改动）时拒绝执行。
+   */
+  const handleConfirmRepair = () => {
+    if (!workspace || !preview || previewStale) return;
+    if (preview.outcome.kind !== 'unsat' || preview.repair?.kind !== 'suggestion') {
+      return;
+    }
+    const removeSet = new Set(preview.repair.remove);
+    const nextLocks = Object.fromEntries(
+      Object.entries(locks).filter(([id]) => !removeSet.has(id)),
+    );
+    const nextRev = specRev + 1;
+    setLocks(nextLocks);
+    setSpecRev(nextRev);
+    runCertify(workspace, nextLocks, nextRev);
   };
 
   const handleAdopt = () => {
@@ -85,6 +117,16 @@ export default function App() {
   const changes =
     preview && !previewStale && preview.outcome.kind === 'sat'
       ? computeChanges(preview.outcome.orderedIds, preview.outcome.assignment, table)
+      : [];
+
+  /** 修复建议候选方案相对当前快门表的改动（仅供展示，确认前不生效） */
+  const repairChanges =
+    preview && !previewStale && preview.repair?.kind === 'suggestion'
+      ? computeChanges(
+          preview.repair.outcome.orderedIds,
+          preview.repair.outcome.assignment,
+          table,
+        )
       : [];
 
   return (
@@ -181,8 +223,11 @@ export default function App() {
               preview={preview}
               stale={previewStale}
               changes={changes}
+              repairChanges={repairChanges}
+              locks={locks}
               workspace={workspace}
               adopted={adopted}
+              onConfirmRepair={handleConfirmRepair}
             />
           </section>
         </main>

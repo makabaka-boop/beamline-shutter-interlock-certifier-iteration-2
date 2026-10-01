@@ -261,6 +261,20 @@ export function solveWorkspace(
   };
 }
 
+/**
+ * 仅判定可行性的轻量入口（一次 SCC，不构造方案）。
+ * 供锁定修复建议在枚举锁定子集时做存在性检查；最终方案仍由
+ * solveWorkspace 给出，两者共用同一构图与 Tarjan 实现，结论一致。
+ */
+export function isSatisfiable(
+  workspace: Workspace,
+  locks: Record<string, ShutterState>,
+): boolean {
+  const g = buildGraph(workspace, locks);
+  const comp = tarjan(g.n, g.adj);
+  return findConflictIds(g.sortedIds, comp).length === 0;
+}
+
 /** 比对方案与当前快门表，按 UTF-8 字节序列出改动。 */
 export function computeChanges(
   orderedIds: string[],

@@ -355,6 +355,38 @@ th {
   opacity: 0.7;
 }
 
+.repair-panel {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 12px 0;
+}
+
+.repair-panel h4 {
+  margin: 2px 0 8px;
+  font-size: 14px;
+  color: var(--accent);
+}
+
+.repair-panel.repair-conflict h4 {
+  color: var(--err);
+}
+
+.repair-remove-list {
+  margin: 6px 0 10px;
+  padding-left: 22px;
+  font-size: 13px;
+}
+
+.repair-remove-list li {
+  padding: 2px 0;
+}
+
+.repair-actions {
+  margin-top: 10px;
+}
+
 .app-footer {
   color: var(--muted);
   font-size: 12px;

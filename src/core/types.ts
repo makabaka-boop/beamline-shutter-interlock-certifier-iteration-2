@@ -73,3 +73,21 @@ export type SolveOutcome =
       kind: 'unsat';
       witness: ConflictWitness;
     };
+
+/**
+ * 锁定修复建议（仅在认证无解时计算）。
+ * 规则与快门表一律不变，唯一允许的修复手段是「撤销若干临时锁定」——
+ * 不修改规则、不翻转锁定值、不直接套用旧快门表。
+ */
+export type LockRepair =
+  | {
+      kind: 'suggestion';
+      /** 需撤销的锁定快门 ID，按 UTF-8 字节序；长度为精确最少撤销数 */
+      remove: string[];
+      /** 撤销所列锁定后，由原 2-SAT 求解器给出的字典序最小完整方案 */
+      outcome: Extract<SolveOutcome, { kind: 'sat' }>;
+    }
+  /** 全部解锁后规则仍无解：规则自身冲突，不提供修复建议 */
+  | { kind: 'rules-conflict' }
+  /** 锁定数超过精确求解上限，未计算建议 */
+  | { kind: 'too-many-locks'; count: number };
